@@ -20,7 +20,7 @@
         let selectedGroup = ['первой', 'второй', 'третьей', 'четвёртой', 'пятой', 'шестой', 'седьмой', 'восьмой', 'девятой', 'десятой'].slice(0, numberOfgroups).iz();
 
         NAtask.setTask({
-            text: `В ${['соревнованиях', 'чемпионате', 'турнире'].iz()} мира участвуют $${numberOfTeams}$ команд, среди которых есть команда ${country.re}. 
+            text: `В чемпионате мира участвуют $${numberOfTeams}$ команд, среди которых есть команда ${country.re}. 
 			С помощью жеребьёвки их нужно разделить на 
 			${number[numberOfgroups]} ${chislitlx(numberOfgroups, groupOrPair).split(' ')[1]}${`, по ${number[numberOfTeamInGroup]} ${chislitlx(numberOfTeamInGroup, 'команда').split(' ')[1]} в каждой`.esli(numberOfTeamInGroup > 2)}. 
 			В ящике вперемешку лежат карточки с номерами групп: $${card}$. 
