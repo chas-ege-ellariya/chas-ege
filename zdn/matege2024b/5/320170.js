@@ -17,7 +17,8 @@
         let card = Array.from({ length: numberOfgroups }).reduce((acc, _, i) => [...acc, ...Array(numberOfTeamInGroup).fill(i + 1)], []).join('$, $');
 
         let country = sklonlxkand(chaslib.sets.countries.iz());
-        let selectedGroup = ['первой', 'второй', 'третьей', 'четвёртой', 'пятой', 'шестой', 'седьмой', 'восьмой', 'девятой', 'десятой'].slice(0, numberOfgroups).iz();
+        let selectedGroupNumber = sl(1, numberOfgroups);
+        let selectedGroup = ordinalNumber(selectedGroupNumber, 'p', 1);
 
         NAtask.setTask({
             text: `В чемпионате мира участвуют $${numberOfTeams}$ команд, среди которых есть команда ${country.re}. 
@@ -25,7 +26,7 @@
 			${number[numberOfgroups]} ${chislitlx(numberOfgroups, groupOrPair).split(' ')[1]}${`, по ${number[numberOfTeamInGroup]} ${chislitlx(numberOfTeamInGroup, 'команда').split(' ')[1]} в каждой`.esli(numberOfTeamInGroup > 2)}. 
 			В ящике вперемешку лежат карточки с номерами групп: $${card}$. 
 			Капитаны команд тянут по одной карточке. 
-			Какова вероятность того, что команда ${country.re} окажется в${`о`.esli(selectedGroup == 'второй')} ${selectedGroup} группе?`,
+			Какова вероятность того, что команда ${country.re} окажется в${`о`.esli(selectedGroupNumber === 2)} ${selectedGroup} группе?`,
             answers: numberOfTeamInGroup / numberOfTeams,
             authors: ['Суматохина Александра'],
         });
