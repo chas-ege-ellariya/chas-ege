@@ -4,30 +4,30 @@
     retryWhileError(function () {
 
         let numberOfTeams = sl(4, 20);
-        let numberOfgroups = sluchDel(numberOfTeams);
-        genAssert(numberOfgroups != 1, 'Случайный делитель оказался единицей');
-        genAssert(numberOfgroups != numberOfTeams, 'Случайный делитель оказался этим же числом');
+        let numberOfGroups = sluchDel(numberOfTeams);
+        genAssert(numberOfGroups != 1, 'Случайный делитель оказался единицей');
+        genAssert(numberOfGroups != numberOfTeams, 'Случайный делитель оказался этим же числом');
 
-        let numberOfTeamInGroup = numberOfTeams / numberOfgroups;
-        genAssertZ1000(numberOfTeamInGroup / numberOfTeams);
+        let numberOfTeamsInGroup = numberOfTeams / numberOfGroups;
+        genAssertZ1000(numberOfTeamsInGroup / numberOfTeams);
 
         let number = ['', 'одну', 'две', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять', 'десять'];
-        let groupOrPair = (numberOfTeamInGroup > 2) ? 'группа' : 'пара';
+        let groupOrPair = (numberOfTeamsInGroup > 2) ? 'группа' : 'пара';
 
-        let card = Array.from({ length: numberOfgroups }).reduce((acc, _, i) => [...acc, ...Array(numberOfTeamInGroup).fill(i + 1)], []).join('$, $');
+        let card = Array.from({ length: numberOfGroups }).reduce((acc, _, i) => [...acc, ...Array(numberOfTeamsInGroup).fill(i + 1)], []).join('$, $');
 
         let country = sklonlxkand(chaslib.sets.countries.iz());
-        let selectedGroupNumber = sl(1, numberOfgroups);
+        let selectedGroupNumber = sl(1, numberOfGroups);
         let selectedGroup = ordinalNumber(selectedGroupNumber, 'p', 1);
 
         NAtask.setTask({
             text: `В чемпионате мира участвуют $${numberOfTeams}$ команд, среди которых есть команда ${country.re}. 
 			С помощью жеребьёвки их нужно разделить на 
-			${number[numberOfgroups]} ${chislitlx(numberOfgroups, groupOrPair).split(' ')[1]}${`, по ${number[numberOfTeamInGroup]} ${chislitlx(numberOfTeamInGroup, 'команда').split(' ')[1]} в каждой`.printIf(numberOfTeamInGroup > 2)}. 
+			${number[numberOfGroups]} ${chislitlx(numberOfGroups, groupOrPair).split(' ')[1]}${`, по ${number[numberOfTeamsInGroup]} ${chislitlx(numberOfTeamsInGroup, 'команда').split(' ')[1]} в каждой`.printIf(numberOfTeamsInGroup > 2)}. 
 			В ящике вперемешку лежат карточки с номерами групп: $${card}$. 
 			Капитаны команд тянут по одной карточке. 
 			Какова вероятность того, что команда ${country.re} окажется в${`о`.printIf(selectedGroupNumber === 2)} ${selectedGroup} группе?`,
-            answers: numberOfTeamInGroup / numberOfTeams,
+            answers: numberOfTeamsInGroup / numberOfTeams,
             authors: ['Суматохина Александра'],
         });
     }, 100);
