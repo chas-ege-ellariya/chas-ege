@@ -23,10 +23,10 @@
         NAtask.setTask({
             text: `В чемпионате мира участвуют $${numberOfTeams}$ команд, среди которых есть команда ${country.re}. 
 			С помощью жеребьёвки их нужно разделить на 
-			${number[numberOfgroups]} ${chislitlx(numberOfgroups, groupOrPair).split(' ')[1]}${`, по ${number[numberOfTeamInGroup]} ${chislitlx(numberOfTeamInGroup, 'команда').split(' ')[1]} в каждой`.esli(numberOfTeamInGroup > 2)}. 
+			${number[numberOfgroups]} ${chislitlx(numberOfgroups, groupOrPair).split(' ')[1]}${`, по ${number[numberOfTeamInGroup]} ${chislitlx(numberOfTeamInGroup, 'команда').split(' ')[1]} в каждой`.printIf(numberOfTeamInGroup > 2)}. 
 			В ящике вперемешку лежат карточки с номерами групп: $${card}$. 
 			Капитаны команд тянут по одной карточке. 
-			Какова вероятность того, что команда ${country.re} окажется в${`о`.esli(selectedGroupNumber === 2)} ${selectedGroup} группе?`,
+			Какова вероятность того, что команда ${country.re} окажется в${`о`.printIf(selectedGroupNumber === 2)} ${selectedGroup} группе?`,
             answers: numberOfTeamInGroup / numberOfTeams,
             authors: ['Суматохина Александра'],
         });
