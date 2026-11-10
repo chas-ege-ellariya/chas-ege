@@ -4,27 +4,9 @@
         'use strict';
         let key = "511614";
 
-        let variant = getListedPreference(key, [{
-            preference: 'two_boys',
-            preferenceValue: 0,
-        }, {
-            preference: 'two_girls',
-            preferenceValue: 1,
-
-        }, {
-            preference: 'boy',
-            preferenceValue: 2,
-        }, {
-            preference: 'girl',
-            preferenceValue: 3,
-
-        }, {
-            preference: 'boy_and_girl',
-            preferenceValue: 4,
-
-        }], sl(0, 4));
-
         let preference = ['two_boys', 'two_girls', 'boy', 'girl', 'boy_and_girl'];
+        let variant = getSelectedPreferenceFromList(key, preference);
+
         let age = sl(0, 2);
 
         let question;
