@@ -1,7 +1,7 @@
 (function () {
+    'use strict';
+    NAinfo.requireApiVersion(0, 2);
     retryWhileError(function () {
-        NAinfo.requireApiVersion(0, 2);
-        'use strict';
         let key = "511614";
 
         let preference = ['two_boys', 'two_girls', 'boy', 'girl', 'boy_and_girl'];
