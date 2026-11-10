@@ -12,7 +12,7 @@
 		let digitWord = ['пятизначное', 'четырёхзначное'][rand1];
 		let direction = ['наибольшее', 'наименьшее'][rand2];
 
-		let divisor = sl(12, 60);
+		let divisor = sl(12, 99);
 		let minVal = [10000, 1000][rand1];
 		let maxVal = [99999, 9999][rand1];
 
