@@ -1,7 +1,7 @@
 (function () {
+    'use strict';
+    NAinfo.requireApiVersion(0, 2);
     retryWhileError(function () {
-        NAinfo.requireApiVersion(0, 2);
-        'use strict';
 
         let numberOfTeams = sl(4, 20);
         let numberOfgroups = sluchDel(numberOfTeams);
