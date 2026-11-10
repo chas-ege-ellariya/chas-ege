@@ -8,7 +8,7 @@
             preference: 'two_boys',
             preferenceValue: 0,
         }, {
-            preference: 'two_girl',
+            preference: 'two_girls',
             preferenceValue: 1,
 
         }, {
@@ -24,7 +24,7 @@
 
         }], sl(0, 4));
 
-        let preference = ['two_boys', 'two_girl', 'boy', 'girl', 'boy_and_girl'];
+        let preference = ['two_boys', 'two_girls', 'boy', 'girl', 'boy_and_girl'];
         let age = sl(0, 2);
 
         let question;
