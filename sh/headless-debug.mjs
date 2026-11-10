@@ -12,9 +12,23 @@
  * 
  * Usage:
  *   node headless-debug.mjs --filepath <path-to-template> [--iterations <count>] [--headless]
- * 
+ *       [--browser <path>] [--temp-profile] [--fast] [--json] [--png <count>] [--out <dir>]
+ *
+ *   --fast         do not wait for MathJax and for the page to settle: many generations quickly;
+ *                  the LaTeX is exported all the same (it is made from the source of the task)
+ *   --json         write <out>/results.json: for every generation its number, the preference
+ *                  combination (or null), the text and the answers of the task (as in vopr.txt
+ *                  and vopr.ver) and the errors of the page since the previous generation
+ *   --png <count>  save the drawings (canvas) of the first <count> generations
+ *                  as <out>/task-<n>.png (task-<n>-<k>.png if a task has several drawings)
+ *   --out <dir>    the directory for --json and --png, headless-debug-output by default
+ *
  * Example:
  *   node sh/headless-debug.mjs --filepath zdn/matege2024p/10/15.js --browser `which chromium` --temp-profile --iterations 5 --headless
+ *   node sh/headless-debug.mjs --filepath zdn/matoge2024/16/392118.js --browser `which chromium` --temp-profile --headless \
+ *       --iterations 300 --fast --json --png 16 --out /tmp/392118
+ * The path to the browser depends on the machine: `which chromium`, `which google-chrome`,
+ * /opt/pw-browsers/chromium and so on.
 
  */
 
@@ -45,6 +59,10 @@ let iterations = 1;
 let headless = false; // Default to visible mode
 let browserPath = '';
 let tempProfile = false;
+let fast = false;
+let writeJson = false;
+let pngCount = 0;
+let outDir = 'headless-debug-output';
 
 for (let i = 0; i < args.length; i++) {
     if (args[i] === '--filepath' && args[i + 1]) {
@@ -60,15 +78,33 @@ for (let i = 0; i < args.length; i++) {
         i++;
     } else if (args[i] === '--temp-profile') {
         tempProfile = true;
+    } else if (args[i] === '--fast') {
+        fast = true;
+    } else if (args[i] === '--json') {
+        writeJson = true;
+    } else if (args[i] === '--png' && args[i + 1]) {
+        pngCount = parseInt(args[i + 1], 10);
+        i++;
+    } else if (args[i] === '--out' && args[i + 1]) {
+        outDir = args[i + 1];
+        i++;
     }
 }
 
 
 
 if (!filepath) {
-    console.error('Usage: node headless-debug.mjs --filepath <path> [--iterations <count>] [--headless]');
+    console.error('Usage: node headless-debug.mjs --filepath <path> [--iterations <count>] [--headless]'
+        + ' [--browser <path>] [--temp-profile] [--fast] [--json] [--png <count>] [--out <dir>]');
     process.exit(1);
 }
+
+const absoluteOutDir = path.resolve(process.cwd(), outDir);
+if (writeJson || pngCount > 0) {
+    fs.mkdirSync(absoluteOutDir, { recursive: true });
+}
+const results = []; // for --json
+let pageErrors = []; // errors of the page since the previous generation, for --json
 
 const absoluteFilepath = path.resolve(process.cwd(), filepath);
 const filepathRelativeToRoot = path.relative(projectRoot, absoluteFilepath);
@@ -129,6 +165,7 @@ console.log(`Mode: ${headless ? 'headless' : 'visible'}`);
     // Always log errors and warnings, even if they match spam patterns
     if (type === 'error' || type === 'warning') {
       console.log(`[BROWSER ${type.toUpperCase()}]`, text);
+      if (type === 'error') pageErrors.push(text);
       return;
     }
     
@@ -140,6 +177,7 @@ console.log(`Mode: ${headless ? 'headless' : 'visible'}`);
   
   page.on('pageerror', error => {
     console.log(`[PAGE ERROR]`, error.message);
+    pageErrors.push(error.message);
   });
     
     // We will intercept copyToClipboard AFTER page scripts have loaded
@@ -171,7 +209,9 @@ console.log(`Mode: ${headless ? 'headless' : 'visible'}`);
     }
     
     // Wait for page to be ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (!fast) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
     
     // First generation (auto-started by otladka.js via parsedJSON.autostartFile)
     try {
@@ -288,9 +328,36 @@ console.log(`Mode: ${headless ? 'headless' : 'visible'}`);
         }
 
         // Wait for MathJax
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        
+        if (!fast) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+
+        // Take the task and its drawings before the LaTeX export: it replaces the canvases by images
+        if (writeJson || i < pngCount) {
+            const snapshot = await page.evaluate((wantPng) => {
+                const canvases = [...document.querySelectorAll('#question canvas')].filter(canvas => canvas.width > 0);
+                return {
+                    text: window.vopr.txt,
+                    answers: window.vopr.ver,
+                    png: wantPng ? canvases.map(canvas => canvas.toDataURL('image/png')) : [],
+                };
+            }, i < pngCount);
+            const pngFiles = snapshot.png.map((dataUrl, k) => {
+                const file = snapshot.png.length > 1 ? `task-${i + 1}-${k + 1}.png` : `task-${i + 1}.png`;
+                fs.writeFileSync(path.join(absoluteOutDir, file), Buffer.from(dataUrl.split(',')[1], 'base64'));
+                return file;
+            });
+            results.push({
+                number: i + 1,
+                preference: combinations.length > 0 ? combinations[comboIdx] : null,
+                text: snapshot.text,
+                answers: snapshot.answers,
+                errors: pageErrors,
+                png: pngFiles,
+            });
+            pageErrors = [];
+        }
+
         // Output preference marker before LaTeX block
         if (combinations.length > 0) {
             console.log(`=== PREFERENCE: ${JSON.stringify(combinations[comboIdx])} ===`);
@@ -336,6 +403,12 @@ console.log(`Mode: ${headless ? 'headless' : 'visible'}`);
         }
     }
     
+    if (writeJson) {
+        const jsonPath = path.join(absoluteOutDir, 'results.json');
+        fs.writeFileSync(jsonPath, JSON.stringify({ filepath: filepathRelativeToRoot, results }, null, 1));
+        console.log(`\nResults written to ${jsonPath}`);
+    }
+
     await browser.close();
     if (tempDir) {
         fs.rmSync(tempDir, { recursive: true, force: true });

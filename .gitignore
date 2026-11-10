@@ -19,6 +19,7 @@ node_modules
 dist
 build
 temp
+headless-debug-output
 
 package-lock.json
 
