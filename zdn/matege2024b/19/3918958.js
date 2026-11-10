@@ -31,30 +31,18 @@
 			return Array.from(String(number), Number).reduce((product, digit) => product * digit, 1);
 		}
 
-		let first = current;
-		while (current >= minVal && current <= maxVal) {
-			let product = digitProduct(current);
-			if (product >= 10 && product <= 100) {
-				break;
-			}
-			current += step;
-		}
-		genAssert(current >= minVal && current <= maxVal, 'Не найдено подходящее число');
-		let prodForBounds = digitProduct(current);
-		let range = Math.max(5, Math.floor(prodForBounds / 5));
-		let minProd = Math.max(1, prodForBounds - range);
-		let maxProd = Math.min(300, prodForBounds + range);
-
-		// Проверяем и числа перед первоначальным кандидатом: их произведения
-		// могут попадать в выбранный промежуток, даже если выходят за [10; 100].
-		let answer = first;
-		while (true) {
+		// Границы произведения цифр, как у ФИПИ: (85; 95), (50; 75)
+		let minProd = 5 * sl(2, 19);
+		let maxProd = minProd + 5 * sl(2, 6);
+		let answer = current;
+		while (answer >= minVal && answer <= maxVal) {
 			let product = digitProduct(answer);
 			if (product > minProd && product < maxProd) {
 				break;
 			}
 			answer += step;
 		}
+		genAssert(answer >= minVal && answer <= maxVal, 'Не найдено подходящее число');
 		NAtask.setTask({
 			text: 'Найдите ' + direction + ' ' + digitWord + ' число, кратное $' + divisor + '$, произведение цифр которого больше $' + minProd +
 				'$, но меньше $' + maxProd + '$.',
