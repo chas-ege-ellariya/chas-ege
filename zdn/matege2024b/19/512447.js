@@ -23,7 +23,7 @@
 		for (let attempt = 0; attempt < 100; attempt++) {
 			let N = sl(min, max);
 			let divs = [];
-			for (let z = 11; z <= 40; z++) {
+			for (let z = 11; z <= 60; z++) {
 				if (N % z === 0) divs.push(z);
 			}
 			if (divs.length > 0) {
@@ -34,7 +34,7 @@
 			}
 		}
 
-		genAssert(found, 'Не удалось подобрать N с делителем в диапазоне [11, 40]');
+		genAssert(found, 'Не удалось подобрать N с делителем в диапазоне [11, 60]');
 
 		function sumDigits(n) {
 			let s = 0;
