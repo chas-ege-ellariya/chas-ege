@@ -304,13 +304,13 @@ console.log(`Mode: ${headless ? 'headless' : 'visible'}`);
             }, combinations[comboIdx]);
         }
         
-        // Regenerate task (except for the very first generation which already happened)
-        if (i > 0) {
+        // Regenerate task. The very first generation already happened (auto-started by otladka.js),
+        // but before the preferences were forced, so with preferences it is made once more
+        if (i > 0 || combinations.length > 0) {
             await page.evaluate(() => {
                 createFromFile();
             });
         }
-        // i === 0: first generation already done (auto-started by otladka.js)
         
         // Wait for question to be generated
         try {
