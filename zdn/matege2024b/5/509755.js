@@ -28,6 +28,7 @@
 		if (variant == 2)
 			objects = sklonlxkand(objects);
 		let selected = majority ? 0 : 1;
+		let [container, fromContainer] = [['ящике', 'ящика'], ['коробке', 'коробки']].iz();
 
 		NAtask.setTask({
 			questions: [
@@ -38,8 +39,8 @@
 						выбранный из этой коробки пакетик окажется пакетиком с ${objects[selected]} чаем.`,
 					answers,
 				}, {
-					text: `В ящике находятся ${objects[0].im} и ${objects[1].im} шары, причём ${objects[0].rm} в ${chislitlx(relation, 'раз')}
-						больше, чем ${objects[1].rm}. Из ящика случайным образом достали один шар.
+					text: `В ${container} находятся ${objects[0].im} и ${objects[1].im} шары, причём ${objects[0].rm} в ${chislitlx(relation, 'раз')}
+						больше, чем ${objects[1].rm}. Из ${fromContainer} случайным образом достали один шар.
 						Найдите вероятность того, что он будет ${objects[selected].te}.`,
 					answers,
 				}, {
