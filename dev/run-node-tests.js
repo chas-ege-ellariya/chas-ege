@@ -150,6 +150,14 @@ QUnit.test('Triangle', function(assert) {
 
 
 try {
+    const registerMathjsFunctionsTests = require('./node-unit-tests-mathjs-functions.js');
+    registerMathjsFunctionsTests(QUnit);
+    console.log('✅ Тесты lib/mathjs_functions.js (node-unit-tests-mathjs-functions.js) подключены.');
+} catch (err) {
+    console.error('⚠️  Не удалось загрузить node-unit-tests-mathjs-functions.js:', err.message);
+}
+
+try {
     const registerNodeTests = require('./node-unit-tests.js');
     registerNodeTests(QUnit);
     console.log('✅ Дополнительные тесты (node-unit-tests.js) подключены.');
