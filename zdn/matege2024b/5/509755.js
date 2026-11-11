@@ -4,13 +4,13 @@
 	retryWhileError(function() {
 		let key = "509755";
 
-		let relation = sl(3, 100);
+		let relation = sl(3, 200);
 		let preference1 = ['tea', 'balls', 'birds'];
 		let preference2 = ['minority', 'majority'];
 		let variant = getSelectedPreferenceFromList(key, preference1);
 		let majority = getSelectedPreferenceFromList(key, preference2);
 		let answers = (majority ? relation - 1 : 1) / relation;
-		genAssertZ1000(answers);
+		genAssert((10000 * answers).isAlmostInteger(), 'Ответ должен иметь не более 4 знаков после запятой');
 		relation--;
 
 		let objects = [
