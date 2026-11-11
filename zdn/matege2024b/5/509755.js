@@ -26,13 +26,7 @@
 				return {im: stem + vowel + 'е', rm: stem + vowel + 'х', te: stem + vowel + 'м'};
 			});
 		if (variant == 2)
-			objects = sklonlxkand(objects).map(bird => {
-				if (bird.ie === 'курица')
-					return {...bird, te: 'курицей'};
-				if (bird.ie === 'перепел')
-					return {...bird, im: 'перепела'};
-				return bird;
-			});
+			objects = sklonlxkand(objects);
 		let selected = majority ? 0 : 1;
 
 		NAtask.setTask({
