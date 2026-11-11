@@ -7,6 +7,7 @@
 		let pow3 = slKrome([pow1, pow2], 2, 20);
 		NAtask.setEvaluationTask({
 			expr: ['(nthRoot(' + num + ',' + pow1 + ')' , 'nthRoot(' + num + ',' + pow2 + ')',num].shuffle().join('*')+')/nthRoot(' + num + ',' + pow3 + ')',
+			rulesBeforePrinting: mathjsRules.nthRoot2sqrt,
 			//forbiddenAnswers: [0],
 			authors: ['Суматохина Александра'],
 		});
