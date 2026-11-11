@@ -1,7 +1,7 @@
 (function() {
+	'use strict';
+	NAinfo.requireApiVersion(0, 2);
 	retryWhileError(function() {
-		NAinfo.requireApiVersion(0, 2);
-		'use strict';
 		let key = "509755";
 
 		let relation = sl(3, 100);
