@@ -12,9 +12,11 @@
  *   3. если не залогинены - логинится по --login/--password (email + SHA-256 пароль,
  *      двухшаговая форма: "Log in with a password" -> email/password -> Log in);
  *      если учетка не зарегистрирована/нет флагов - ругается и выходит;
- *   4. при --agent включает Agent Mode; если он недоступен - ругается и выходит;
- *   5. вводит --text или содержимое --text-file в поле чата;
- *   6. отправляет сообщение и ждет --post-wait (по умолчанию 30) секунд.
+ *   4. при --set-instruction <file> перед отправкой записывает содержимое файла
+ *      в пользовательскую инструкцию (Settings -> Personalization -> Customize Qwen);
+ *   5. при --agent включает Agent Mode; если он недоступен - ругается и выходит;
+ *   6. вводит --text или содержимое --text-file в поле чата;
+ *   7. отправляет сообщение и ждет --post-wait (по умолчанию 30) секунд.
  *
  * Селекторы проверены на реальном DOM qwen-chat-fe 0.3.20, 0.3.22 и 0.3.43.
  *
@@ -59,6 +61,8 @@ const SITE = 'https://chat.qwen.ai';
 const APP_VERSION_HINT = 'qwen-chat-fe 0.3.20/0.3.22/0.3.43';
 /** Версии фронта, на которых селекторы и поведение проверены вживую. */
 const TESTED_APP_VERSIONS = ['0.3.20', '0.3.22', '0.3.43'];
+/** Лимит поля пользовательской инструкции (Settings -> Personalization, счётчик "N/40960"). */
+const INSTRUCTION_MAX_CHARS = 40960;
 
 /* ============================ exit codes ============================ */
 const EXIT = {
@@ -161,6 +165,7 @@ const OPTIONS_SPEC = {
   'password-stdin': { type: 'boolean', default: false },
   text: { type: 'string' },
   'text-file': { type: 'string' },
+  'set-instruction': { type: 'string' },
   agent: { type: 'boolean', default: false },
   headless: { type: 'boolean', default: false },
   lang: { type: 'string' },
@@ -212,6 +217,8 @@ function usage() {
 РЕЖИМЫ / ПОВЕДЕНИЕ
   --agent                    переключиться в Agent Mode (ошибка, если недоступен)
   --new-chat                 начать новый чат перед вводом текста
+  --set-instruction <путь>   перед отправкой записать содержимое файла в пользовательскую
+                             инструкцию (Settings -> Personalization -> Customize Qwen)
   --dry-run                  ввести текст, но НЕ отправлять
   --capture-response         после отправки вытащить текст ответа в лог
   --keep-open                не закрывать браузер после завершения
@@ -325,6 +332,7 @@ async function parseCli(argv) {
     passwordStdin: !!f['password-stdin'],
     text: f.text,
     textFile: f['text-file'],
+    setInstructionFile: f['set-instruction'],
     agent: !!f.agent,
     headless: !!f.headless,
     lang: f['no-force-lang'] ? null : f.lang || 'en-US',
@@ -389,6 +397,26 @@ async function parseCli(argv) {
   if (!cfg.messageText || !cfg.messageText.trim()) {
     throw new StepError('Текст сообщения пуст после чтения источника - нечего отправлять.', EXIT.BAD_ARGS);
   }
+  if (cfg.setInstructionFile !== undefined) {
+    const p = path.resolve(cfg.setInstructionFile);
+    if (!fs.existsSync(p)) throw new StepError(`--set-instruction: файл не найден: ${p}`, EXIT.BAD_ARGS);
+    let stat;
+    try {
+      stat = fs.statSync(p);
+    } catch (e) {
+      throw new StepError(`--set-instruction: ${e.message}`, EXIT.BAD_ARGS);
+    }
+    if (!stat.isFile()) throw new StepError(`--set-instruction: это не обычный файл: ${p}`, EXIT.BAD_ARGS);
+    cfg.instructionText = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n').replace(/\n+$/, '');
+    cfg.instructionSource = `файл ${p} (${stat.size} байт)`;
+    if (!cfg.instructionText.trim()) {
+      throw new StepError('--set-instruction: файл пуст - нечего записывать в инструкцию.', EXIT.BAD_ARGS);
+    }
+    if (Array.from(cfg.instructionText).length > INSTRUCTION_MAX_CHARS) {
+      throw new StepError(`--set-instruction: текст длиннее лимита поля инструкции (${INSTRUCTION_MAX_CHARS} симв.).`, EXIT.BAD_ARGS);
+    }
+  }
+
 
   const [w, h] = String(cfg.windowSize).split(',').map((x) => parseInt(x, 10));
   if (!w || !h) throw new StepError(`--window-size должен быть в формате W,H (получено: ${cfg.windowSize})`, EXIT.BAD_ARGS);
@@ -683,6 +711,11 @@ const SEL = {
   mobileEmailInput: '.qwenchat-auth-mobile-input-items input[name="email"]',
   mobilePasswordInput: '.qwenchat-auth-mobile-input-items input[name="password"]',
 
+  // --- персонализация (/settings/personalization -> Customize Qwen) ---
+  // Поле "Пользовательская инструкция" лежит в модалке, открываемой кнопкой строки
+  // "Customize Qwen". Две textarea: "о себе" (maxlength=500) и инструкция (40960).
+  instructionTextarea: 'textarea[maxlength="40960"]',
+
   // --- чат ---
   textarea: 'textarea.message-input-textarea',
   inputContainer: '.message-input-container',
@@ -768,6 +801,7 @@ const TXT = {
   continue: ['Continue', 'Продолжить'],
   agentMode: ['Agent Mode', 'Режим агента', 'Агент'],
   more: ['More', 'Ещё', 'Еще'],
+  saveSettings: ['Save', 'Сохранить'],
 };
 
 /* ==================== внутристраничные хелперы (window.__qca) ====================
@@ -2600,6 +2634,114 @@ async function captureResponse(ctx) {
   await shot(ctx, 'final-response', true);
 }
 
+/* ============================ custom instruction ============================ */
+/**
+ * Открывает модалку "Customize Qwen" (Settings -> Personalization) и возвращает
+ * handle поля пользовательской инструкции. Триггер - кнопка внутри строки настроек
+ * "Customize Qwen" (в en-US "Settings", в ru "Настройки"); кнопки "Manage" на этой
+ * странице ведут в Memory/Cookies, поэтому их не трогаем.
+ */
+async function openCustomizeInstruction(ctx) {
+  const { page, cfg } = ctx;
+  const btn = await page.evaluateHandle(() => {
+    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const items = Array.from(document.querySelectorAll('[class*="setting-content-item"],[class*="setting-item"],[class*="settings-item"]'));
+    const it = items.find((e) => /customize qwen/i.test(e.textContent));
+    if (it) {
+      const b = Array.from(it.querySelectorAll('button,[role="button"]')).find((x) => norm(x.textContent));
+      if (b) return b;
+    }
+    const heads = Array.from(document.querySelectorAll('*')).filter((e) => /^customize qwen$/i.test(norm(e.textContent)));
+    heads.sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+    const head = heads[0];
+    if (!head) return null;
+    const btns = Array.from(document.querySelectorAll('button,[role="button"]')).filter((b) => /^(settings|настройки|manage|настроить)$/i.test(norm(b.textContent)));
+    return btns.filter((b) => (head.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)[0] || null;
+  });
+  const el = btn.asElement();
+  if (!el) {
+    throw new StepError('Не найдена кнопка открытия блока "Customize Qwen" на /settings/personalization.', EXIT.INPUT_NOT_FOUND);
+  }
+  await humanClick(page, el, 'Customize Qwen -> open');
+  try {
+    await page.waitForFunction(() => {
+      const m = document.querySelector('.ant-modal-root,[role="dialog"]');
+      return !!m && m.querySelectorAll('textarea,input,[contenteditable="true"]').length > 0;
+    }, { timeout: cfg.elementTimeout, polling: 150 });
+  } catch (_) {}
+  const ta = await waitForStableVisible(page, [SEL.instructionTextarea], {
+    timeout: 4000, stableMs: 400, label: 'поле инструкции (maxlength=40960)',
+  });
+  if (ta) return ta.handle;
+  const pick = await page.evaluateHandle(() => {
+    const m = document.querySelector('.ant-modal-root,[role="dialog"]') || document;
+    const tas = Array.from(m.querySelectorAll('textarea'));
+    if (!tas.length) return null;
+    return tas.find((t) => t.getAttribute('maxlength') === '40960') || tas[tas.length - 1];
+  });
+  const pel = pick.asElement();
+  if (!pel) {
+    throw new StepError('В модалке "Customize Qwen" не найдено поле пользовательской инструкции (textarea).', EXIT.INPUT_NOT_FOUND);
+  }
+  return pel;
+}
+
+/**
+ * --set-instruction <file>: записывает содержимое файла в поле "Пользовательская
+ * инструкция" (Settings -> Personalization -> Customize Qwen) и сохраняет.
+ * Вызывается ПОСЛЕ логина, но ДО открытия чата. Успех проверяем по СОСТОЯНИЮ:
+ * перезагрузка + повторное открытие модалки + сверка значения (с ретраями, т.к.
+ * сохранение на сервере асинхронно).
+ */
+async function setCustomInstruction(ctx) {
+  const { page, cfg } = ctx;
+  const text = cfg.instructionText;
+  log.info(`записываю пользовательскую инструкцию (${cfg.instructionSource}, ${Array.from(text).length} симв.)`);
+  await page.goto(`${SITE}/settings/personalization`, { waitUntil: 'domcontentloaded', timeout: cfg.navTimeout });
+  await settle(ctx, 1.5);
+  await handleCaptchaIfAny(ctx, 'страница персонализации');
+  const pathNow = await page.evaluate(() => location.pathname);
+  if (!/^\/settings\//.test(pathNow)) {
+    throw new StepError(`Не удалось открыть /settings/personalization: редирект на ${pathNow}. Вероятно, профиль не залогинен.`, EXIT.NOT_LOGGED_IN);
+  }
+  const ta = await openCustomizeInstruction(ctx);
+  await humanClick(page, ta, 'instruction textarea');
+  await setInputValue(page, ta, text, 'custom instruction');
+  let actual = await ta.evaluate((el) => el.value);
+  if (actual !== text) {
+    log.warn('значение инструкции не совпало - переустанавливаю');
+    await setInputValue(page, ta, text, 'custom instruction (retry)');
+    await sleep(250);
+    actual = await ta.evaluate((el) => el.value);
+    if (actual !== text) throw new StepError('Не удалось вставить текст в поле пользовательской инструкции.', EXIT.INPUT_NOT_FOUND);
+  }
+  await shot(ctx, 'instruction-typed');
+  const saved = await clickByText(page, TXT.saveSettings, null, 'Save (personalization)', 0);
+  if (!saved) throw new StepError('Не найдена кнопка сохранения (Save/Сохранить) в модалке "Customize Qwen".', EXIT.INPUT_NOT_FOUND);
+  await settle(ctx, 2.0);
+  let persisted = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.goto(`${SITE}/settings/personalization`, { waitUntil: 'domcontentloaded', timeout: cfg.navTimeout });
+    await settle(ctx, 2.0);
+    const ta2 = await openCustomizeInstruction(ctx);
+    persisted = await ta2.evaluate((el) => el.value);
+    if (persisted === text) break;
+    log.debug(`инструкция ещё не совпала (попытка ${attempt + 1}) - жду и перечитываю`);
+    await page.keyboard.press('Escape').catch(() => {});
+    await sleep(2000);
+  }
+  if (persisted !== text) {
+    const toasts = await readErrorToasts(page);
+    await shot(ctx, 'instruction-not-saved');
+    throw new StepError('Инструкция НЕ сохранилась: после перезагрузки значение поля не совпадает.\n' +
+      (toasts.length ? `Сообщения сайта: ${JSON.stringify(toasts)}\n` : '') +
+      `Ожидал ${Array.from(text).length} симв., получил ${Array.from(persisted || '').length} симв.`, EXIT.INTERNAL);
+  }
+  log.ok('ЭТАП ПРОЙДЕН: пользовательская инструкция сохранена и подтверждена перезагрузкой');
+  await shot(ctx, 'instruction-saved');
+  await page.keyboard.press('Escape').catch(() => {});
+}
+
 /* ============================ main ============================ */
 async function main() {
   let cfg;
@@ -2707,6 +2849,12 @@ async function main() {
       log.ok('ЭТАП ПРОЙДЕН: профиль уже был авторизован, логин не понадобился');
     }
     await sleep(cfg.stepDelay);
+
+    /* --- шаг 2.5: пользовательская инструкция (--set-instruction) --- */
+    if (cfg.instructionText !== undefined) {
+      await setCustomInstruction(ctx);
+      await sleep(cfg.stepDelay);
+    }
 
     /* --- шаг 3: страница чата --- */
     await ensureChatPage(ctx);
@@ -2819,6 +2967,8 @@ module.exports._internals = {
   sendMessage,
   startNewChat,
   ensureChatPage,
+  setCustomInstruction,
+  openCustomizeInstruction,
   humanClick,
   findVisible,
   waitForAny,
