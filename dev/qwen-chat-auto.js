@@ -16,7 +16,7 @@
  *   5. вводит --text или содержимое --text-file в поле чата;
  *   6. отправляет сообщение и ждет --post-wait (по умолчанию 30) секунд.
  *
- * Селекторы проверены на реальном DOM qwen-chat-fe 0.3.20 и 0.3.22.
+ * Селекторы проверены на реальном DOM qwen-chat-fe 0.3.20, 0.3.22 и 0.3.43.
  *
  * ГЛАВНАЯ ЛОВУШКА ЭТОГО САЙТА (найдена и исправлена 2026-10-22):
  *   qwen-chat-fe рендерит блок выбора режима ДВАЖДЫ. Первый узел ".mode-select-open"
@@ -56,9 +56,9 @@ const { parseArgs } = require('util');
 const puppeteer = require('puppeteer');
 
 const SITE = 'https://chat.qwen.ai';
-const APP_VERSION_HINT = 'qwen-chat-fe 0.3.20/0.3.22';
+const APP_VERSION_HINT = 'qwen-chat-fe 0.3.20/0.3.22/0.3.43';
 /** Версии фронта, на которых селекторы и поведение проверены вживую. */
-const TESTED_APP_VERSIONS = ['0.3.20', '0.3.22'];
+const TESTED_APP_VERSIONS = ['0.3.20', '0.3.22', '0.3.43'];
 
 /* ============================ exit codes ============================ */
 const EXIT = {
@@ -666,7 +666,7 @@ async function detectCaptcha(page) {
   }
 }
 
-/* ============================ selectors (проверены на 0.3.20 и 0.3.22) ============================ */
+/* ============================ selectors (проверены на 0.3.20, 0.3.22 и 0.3.43) ============================ */
 const SEL = {
   // --- форма авторизации ---
   authRoot: '.qwenchat-page-auth',
