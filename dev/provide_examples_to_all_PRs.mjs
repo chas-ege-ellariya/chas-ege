@@ -14,8 +14,40 @@ const __dirname = path.dirname(__filename);
 // projectRoot is imported from ./lib/github-api.mjs
 
 
-const yuliyaReviewedCacheFilePath = path.join(projectRoot, '.yuliya-reviewed.cache');
-let yuliyaReviewedCache = new Set();
+// Ассистенты-ревьюеры, которых зовём один раз на коммит.
+// Все они независимы друг от друга: свой логин, свой скрипт вызова, свой лог и свой кэш.
+// Чтобы добавить нового ревьюера, достаточно дописать сюда запись и положить рядом
+// dev/ask_<Name>_to_review.sh (тонкую обёртку над dev/lib/ask_to_review.sh).
+const perCommitReviewers = [
+    {
+        name: 'Юлия',
+        login: 'chas-ege-yuliya',
+        scriptName: 'ask_Yuliya_to_review.sh',
+        logName: 'yuliya.log',
+        cacheFileName: '.yuliya-reviewed.cache',
+    },
+    {
+        name: 'Кира',
+        login: 'kira-dry-everywhere',
+        scriptName: 'ask_Kira_to_review.sh',
+        logName: 'kira.log',
+        cacheFileName: '.kira-reviewed.cache',
+    },
+];
+
+for (const reviewer of perCommitReviewers) {
+    reviewer.cacheFilePath = path.join(projectRoot, reviewer.cacheFileName);
+    reviewer.cache = new Set();
+}
+
+function loadPerCommitReviewerCaches() {
+    for (const reviewer of perCommitReviewers) {
+        if (!fs.existsSync(reviewer.cacheFilePath)) continue;
+        const cacheContent = fs.readFileSync(reviewer.cacheFilePath, 'utf8');
+        reviewer.cache = new Set(cacheContent.split('\n').filter(Boolean));
+        console.log(`Loaded ${reviewer.cache.size} entries from ${reviewer.cacheFileName}.`);
+    }
+}
 
 const args = process.argv.slice(2);
 const editLastFlag = args.includes('--edit-last');
@@ -79,10 +111,21 @@ async function handlePRWithExamples(pr, token, cachedComments = null, cachedComm
     await checkAndAskUser(pr, token, 'chas-ege-selena', 'ask_Selena_to_fix.sh', 'selena.log', comments, commits);
     await checkAndAskUser(pr, token, 'chas-ege-polina', 'ask_Polina_to_fix.sh', 'polina.log', comments, commits);
     
-    // Проверка Юлии (без ограничений по номеру PR, один раз на коммит)
-    await checkAndAskYuliya(pr, token, comments, commits);
+    // Ревьюеры «один раз на коммит» (Юлия, Кира, ...): без ограничений по номеру PR,
+    // независимо друг от друга, до заглушки.
+    // Формальные ревью (/pulls/N/reviews) тянем лениво и не больше одного раза на PR:
+    // они нужны только тем ревьюерам, у кого нет свежего комментария.
+    let reviewsPromise = null;
+    const getReviews = () => {
+        if (!reviewsPromise) {
+            reviewsPromise = fetchPRReviews(pr.number, token);
+        }
+        return reviewsPromise;
+    };
+    for (const reviewer of perCommitReviewers) {
+        await checkAndAskReviewerPerCommit(pr, token, reviewer, comments, commits, getReviews);
+    }
 
-    
     // Заглушка: пропускаем PR с номером меньше 3280
     if (pr.number < 3280) {
         console.log(`⏭️  PR #${pr.number} < 3280, пропускаем (заглушка)`);
@@ -279,6 +322,36 @@ async function fetchPRReviewComments(prNum, token) {
     return reviewComments;
 }
 
+/**
+ * Формальные ревью пуллреквеста (Review changes: APPROVE / REQUEST_CHANGES / COMMENTED).
+ * В отличие от комментариев, у них нет created_at: время лежит в submitted_at.
+ * Незавершённые (PENDING) ревью submitted_at не имеют и в расчёт не берутся.
+ */
+async function fetchPRReviews(prNum, token) {
+    let reviews = [];
+    let url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNum}/reviews?per_page=100`;
+    while (url) {
+        const response = await fetch(url, {
+            headers: {
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'chas-ege-provide-examples-all-prs',
+                ...(token && { 'Authorization': `token ${token}` })
+            }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        const data = await response.json();
+        reviews = reviews.concat(data);
+        const linkHeader = response.headers.get('link');
+        if (linkHeader) {
+            const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+            url = nextMatch ? nextMatch[1] : null;
+        } else {
+            url = null;
+        }
+    }
+    return reviews;
+}
+
 async function isLastCommentInPR(issueComments, reviewComments, targetCommentId) {
     const allComments = [...issueComments, ...reviewComments];
     allComments.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -394,11 +467,7 @@ async function main() {
             console.log(`Loaded ${generatedExamplesCache.size} entries from generated-examples cache.`);
         }
 
-        if (fs.existsSync(yuliyaReviewedCacheFilePath)) {
-            const yuliyaCacheContent = fs.readFileSync(yuliyaReviewedCacheFilePath, 'utf8');
-            yuliyaReviewedCache = new Set(yuliyaCacheContent.split('\n').filter(Boolean));
-            console.log(`Loaded ${yuliyaReviewedCache.size} entries from yuliya-reviewed cache.`);
-        }
+        loadPerCommitReviewerCaches();
 
         const prUpdatedAtCacheFilePath = path.join(projectRoot, '.pr-updated-at-no-action.cache');
         let prUpdatedAtCache = {};
@@ -740,73 +809,117 @@ async function fetchPRCommits(prNum, token) {
 }
 
 
-async function checkAndAskYuliya(pr, token, cachedComments = null, cachedCommits = null) {
-    console.log(`🔍 Проверка Юлии для PR #${pr.number}`);
+/**
+ * Максимальная дата из списка ISO-строк. Пустые/некорректные значения игнорируются.
+ * Если ничего нет — new Date(0) (эпоха), чтобы сравнения работали как раньше.
+ */
+function lastActivityDate(dates) {
+    let last = new Date(0);
+    for (const value of dates) {
+        if (!value) continue;
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) continue;
+        if (date > last) last = date;
+    }
+    return last;
+}
+
+/**
+ * Запоминает, что ревьюер уже отработал по этому коммиту (кэш в памяти + на диске).
+ */
+function rememberReviewed(reviewer, cacheKey) {
+    reviewer.cache.add(cacheKey);
+    fs.appendFileSync(reviewer.cacheFilePath, cacheKey + '\n');
+}
+
+/**
+ * Зовёт ассистента-ревьюера, если после последнего коммита PR от него нет ответа.
+ * Ответом считается и комментарий (в обсуждении или построчный), и формальное ревью
+ * (в том числе «Approve» вообще без текста).
+ * Один вызов на коммит: факт «ревьюер уже ответил» кэшируется по паре PR:headSha.
+ *
+ * @param {Object} pr - пуллреквест.
+ * @param {string} token - токен GitHub.
+ * @param {Object} reviewer - запись из perCommitReviewers.
+ * @param {Array|null} cachedComments - уже загруженные комментарии (экономим API).
+ * @param {Array|null} cachedCommits - уже загруженные коммиты.
+ * @param {Function|null} getReviews - ленивый загрузчик формальных ревью, общий на PR.
+ */
+async function checkAndAskReviewerPerCommit(pr, token, reviewer, cachedComments = null, cachedCommits = null, getReviews = null) {
+    const { name, login, scriptName, logName } = reviewer;
+    console.log(`🔍 Проверка ${name} для PR #${pr.number}`);
     try {
-        const userLogin = 'chas-ege-yuliya';
-        
         // 1. Получаем коммиты (сначала для проверки кэша)
         const commits = cachedCommits || await fetchPRCommits(pr.number, token);
         if (!commits || commits.length === 0) {
-            console.log(`⏭️ PR #${pr.number}: Нет коммитов, пропускаем проверку Юлии.`);
+            console.log(`⏭️ PR #${pr.number}: Нет коммитов, пропускаем проверку ${name}.`);
             return;
         }
-        
-        const lastCommit = commits.sort((a, b) => {
+
+        const lastCommit = [...commits].sort((a, b) => {
             const dateA = new Date(a.commit?.committer?.date || a.commit?.author?.date || 0);
             const dateB = new Date(b.commit?.committer?.date || b.commit?.author?.date || 0);
             return dateB - dateA;
         })[0];
-        
+
         const lastCommitSha = lastCommit.sha;
         const cacheKey = `${pr.number}:${lastCommitSha}`;
-        
-        // Проверяем кэш: если Юлия уже ответила на этот коммит, пропускаем
-        if (yuliyaReviewedCache.has(cacheKey)) {
-            console.log(`⏭️ PR #${pr.number}: Юлия уже проверяла коммит ${lastCommitSha.substring(0,7)} (в кэше), пропускаем.`);
+
+        // Проверяем кэш: если ревьюер уже ответил на этот коммит, пропускаем
+        if (reviewer.cache.has(cacheKey)) {
+            console.log(`⏭️ PR #${pr.number}: ${name} уже проверяла коммит ${lastCommitSha.substring(0,7)} (в кэше), пропускаем.`);
             return;
         }
-        
+
         const lastCommitDate = new Date(lastCommit.commit?.committer?.date || lastCommit.commit?.author?.date || 0);
-        
+
         const comments = cachedComments || await fetchPRComments(pr.number, token);
-        
-        // 2. Комментарии от Юлии
-        const userComments = comments.filter(c => 
-            c.user && c.user.login === userLogin
+
+        // 2. Комментарии ревьюера (fetchPRComments отдаёт и обсуждение, и построчные)
+        const lastCommentDate = lastActivityDate(
+            comments.filter(c => c.user && c.user.login === login).map(c => c.created_at)
         );
-        const lastUserComment = userComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-        const lastUserCommentDate = lastUserComment ? new Date(lastUserComment.created_at) : new Date(0);
-        
-        // 3. Проверяем условие: Юлия уже комментировала этот (или более поздний) коммит
-        if (lastUserCommentDate >= lastCommitDate) {
-            console.log(`⏭️ PR #${pr.number}: Юлия уже комментировала коммит ${lastCommitSha.substring(0,7)}, добавляем в кэш.`);
-            yuliyaReviewedCache.add(cacheKey);
-            fs.appendFileSync(yuliyaReviewedCacheFilePath, cacheKey + '\n');
+
+        // 3. Уже комментировала после последнего коммита — формальные ревью тянуть незачем
+        if (lastCommentDate >= lastCommitDate) {
+            console.log(`⏭️ PR #${pr.number}: ${name} уже комментировала коммит ${lastCommitSha.substring(0,7)}, добавляем в кэш.`);
+            rememberReviewed(reviewer, cacheKey);
             return;
         }
-        
-        console.log(`🚀 PR #${pr.number}: Есть новый коммит ${lastCommitSha.substring(0,7)}, Юлия не ответила — зовём!`);
-        const scriptPath = path.join(projectRoot, 'dev', 'ask_Yuliya_to_review.sh');
-        
+
+        // 4. Формальные ревью: body у них может быть пустым, поэтому смотрим только на дату
+        const reviews = getReviews ? await getReviews() : await fetchPRReviews(pr.number, token);
+        const lastReviewDate = lastActivityDate(
+            reviews.filter(r => r.user && r.user.login === login).map(r => r.submitted_at)
+        );
+
+        if (lastReviewDate >= lastCommitDate) {
+            console.log(`⏭️ PR #${pr.number}: ${name} уже сделала ревью коммита ${lastCommitSha.substring(0,7)}, добавляем в кэш.`);
+            rememberReviewed(reviewer, cacheKey);
+            return;
+        }
+
+        console.log(`🚀 PR #${pr.number}: Есть новый коммит ${lastCommitSha.substring(0,7)}, ${name} не ответила — зовём!`);
+        const scriptPath = path.join(projectRoot, 'dev', scriptName);
+
         const { stdout, stderr } = await execFileAsync('bash', [scriptPath, pr.number.toString()], {
             cwd: projectRoot,
             maxBuffer: 1024 * 1024 * 10
         });
-        
+
         if (stderr) {
-            console.warn(`stderr from ask_Yuliya_to_review.sh:\n${stderr}`);
+            console.warn(`stderr from ${scriptName}:\n${stderr}`);
         }
-        
+
         // Записываем вывод в log
-        const logPath = path.join(projectRoot, 'yuliya.log');
+        const logPath = path.join(projectRoot, logName);
         const logEntry = `[${new Date().toISOString()}] PR #${pr.number}\n${stdout}\n${stderr ? 'STDERR: ' + stderr : ''}\n${'='.repeat(80)}\n`;
         fs.appendFileSync(logPath, logEntry);
-        
-        console.log(`✅ PR #${pr.number}: ask_Yuliya_to_review.sh выполнен успешно`);
-        
+
+        console.log(`✅ PR #${pr.number}: ${scriptName} выполнен успешно`);
+
     } catch (error) {
-        console.error(`❌ PR #${pr.number}: Ошибка при проверке Юлии:`, error.message);
+        console.error(`❌ PR #${pr.number}: Ошибка при проверке ${name}:`, error.message);
         if (error.stderr) {
             console.error('stderr:', error.stderr);
         }
