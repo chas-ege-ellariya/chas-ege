@@ -33,6 +33,13 @@ const perCommitReviewers = [
         logName: 'kira.log',
         cacheFileName: '.kira-reviewed.cache',
     },
+    {
+        name: 'Вега',
+        login: 'chas-ege-vega',
+        scriptName: 'ask_Vega_to_review.sh',
+        logName: 'vega.log',
+        cacheFileName: '.vega-reviewed.cache',
+    },
 ];
 
 for (const reviewer of perCommitReviewers) {
