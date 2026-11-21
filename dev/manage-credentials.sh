@@ -10,6 +10,14 @@
 
 PROFILES_DIR="../chas-ege-chromium-profiles"
 
+# Если каталога профилей нет - создаём его
+if [ ! -d "$PROFILES_DIR" ]; then
+    if ! mkdir -p "$PROFILES_DIR"; then
+        echo "Ошибка: не удалось создать каталог профилей: $PROFILES_DIR"
+        exit 1
+    fi
+fi
+
 case "$1" in
     create)
         if [ $# -ne 4 ]; then
