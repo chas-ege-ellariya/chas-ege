@@ -11,6 +11,12 @@
 # внутри папки профиля; если файла нет — полагаемся на сохранённую сессию.
 #
 # Тонкие обёртки над этим скриптом: dev/ask_Yuliya_to_review.sh, dev/ask_Kira_to_review.sh, ...
+#
+# Безбраузерный путь (необязательный, по умолчанию выключен):
+#   bash dev/lib/ask_to_review.sh Kira kira-auto 3612 --api
+#   CHAS_EGE_ASK_VIA_API=1 bash dev/ask_Kira_to_review.sh 3612
+# Сколько секунд читать поток ответа: CHAS_EGE_API_WAIT (по умолчанию 30).
+# Запретить откат на браузер при неудаче API: CHAS_EGE_ASK_API_STRICT=1.
 
 if [ $# -lt 3 ] || [ -z "$3" ]; then
     echo "Usage: bash dev/lib/ask_to_review.sh <Name> <profile-prefix> <PR number>" >&2
@@ -48,6 +54,30 @@ if [ -f "$CREDENTIALS_FILE" ]; then
 else
     echo "WARNING: Credentials file not found at $CREDENTIALS_FILE"
     echo "Using environment variables or expecting manual login"
+fi
+
+# --- Необязательный безбраузерный путь. ПО УМОЛЧАНИЮ ВЫКЛЮЧЕН. ---
+# Включается четвёртым аргументом --api или переменной CHAS_EGE_ASK_VIA_API=1.
+# По умолчанию зовём headless-браузером: /api/v2/chat/completions защищён антиботом
+# Alibaba (x5sec/bx-ua), и из датацентрового IP требует капчу. Если API не сработал,
+# молча откатываемся на браузер; CHAS_EGE_ASK_API_STRICT=1 запрещает откат.
+VIA_API="${CHAS_EGE_ASK_VIA_API:-0}"
+if [ "${4:-}" = "--api" ]; then
+    VIA_API=1
+fi
+if [ "$VIA_API" = "1" ]; then
+    echo "Пробую безбраузерный путь (API)..."
+    /usr/local/bin/node dev/ask_reviewer_via_api.mjs "$PR_NUMBER" \
+        --credentials "$PROFILE_PATH" --wait="${CHAS_EGE_API_WAIT:-30}"
+    api_rc=$?
+    if [ $api_rc -eq 0 ]; then
+        exit 0
+    fi
+    if [ "${CHAS_EGE_ASK_API_STRICT:-0}" = "1" ]; then
+        echo "API-путь не сработал (код $api_rc), строгий режим - браузер не запускаю."
+        exit $api_rc
+    fi
+    echo "API-путь не сработал (код $api_rc) - откатываюсь на headless-браузер."
 fi
 
 # Формируем текст сообщения

@@ -226,6 +226,9 @@ export function openSession({ login, password, baseUrl = QWEN_BASE_URL, timeoutM
     const session = {
         login, baseUrl, userAgent: ua,
         get email() { return email; },
+        // токен наружу нужен потоковым запросам (SSE), которые не проходят через request()
+        get token() { return token; },
+        async ensureToken() { if (!token) await session.refresh(); return token; },
         get tokenSource() { return token ? (cached && token === cached.token ? 'cache' : 'fresh') : 'none'; },
         async refresh() {
             const s = await signIn({ login, password, baseUrl, timeoutMs, userAgent: ua });
