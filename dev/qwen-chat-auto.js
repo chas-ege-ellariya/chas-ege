@@ -54,6 +54,7 @@ const path = require('path');
 const crypto = require('crypto');
 const readline = require('readline');
 const { parseArgs } = require('util');
+const { pathToFileURL } = require('url');
 
 const puppeteer = require('puppeteer');
 
@@ -1154,6 +1155,8 @@ async function readSessionState(page) {
 
     // дополнительный (не обязательный) признак: авторизованный запрос к своему API из контекста страницы
     let api = { status: null, ok: false, id: null, email: null, error: null };
+    // секретная часть отдельно от api: объект api целиком уходит в log.debug
+    let auth = null;
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 9000);
@@ -1168,10 +1171,14 @@ async function readSessionState(page) {
       const ct = r.headers.get('content-type') || '';
       if (/json/i.test(ct)) {
         const j = await r.json();
-        api.ok = r.status === 200 && !!j;
-        api.id = j && (j.id || null);
-        api.email = j && (j.email || null);
-        api.role = j && (j.role || null);
+        const d = j && j.data ? j.data : j; // API отдаёт {success, data:{...}}
+        api.ok = r.status === 200 && !!d;
+        api.id = d && (d.id || null);
+        api.email = d && (d.email || null);
+        api.role = d && (d.role || null);
+        if (r.status === 200 && d && d.token) {
+          auth = { token: String(d.token), email: d.email || null, expiresAt: d.expires_at || null };
+        }
       } else {
         api.ok = false;
         api.error = 'non-json (' + ct.slice(0, 40) + ')';
@@ -1187,9 +1194,46 @@ async function readSessionState(page) {
       hits: hits.slice(0, 12),
       tokenishCookies,
       api,
+      auth,
+      userAgent: navigator.userAgent,
       text: document.body && document.body.innerText ? document.body.innerText.slice(0, 300) : '',
     };
   });
+}
+
+/**
+ * Кладёт токен профильной сессии в общий кэш dev/.qwen-tokens.cache, чтобы
+ * безбраузерный dev/set-qwen-prompt.mjs не логинился заново. Кэш общий
+ * (dev/lib/qwen-token-cache.mjs, ESM) — тянем через динамический import().
+ * Заодно сохраняем настоящий User-Agent профиля: безбраузерный клиент возьмёт
+ * его из кэша и будет говорить ровно тем же голосом.
+ * Основной сценарий не роняем никогда: не записалось — и ладно.
+ */
+async function rememberTokenInSharedCache(ctx, state) {
+  try {
+    const auth = state && state.auth;
+    if (!auth || !auth.token) {
+      log.debug('токен профильной сессии не найден - в общий кэш не кладу');
+      return;
+    }
+    const login = (ctx.cfg && ctx.cfg.login) || auth.email;
+    if (!login) {
+      log.debug('неизвестен логин профиля - токен в общий кэш не кладу');
+      return;
+    }
+    const mod = await import(pathToFileURL(path.join(__dirname, 'lib', 'qwen-token-cache.mjs')).href);
+    mod.writeToken({
+      login,
+      baseUrl: SITE,
+      token: auth.token,
+      expiresAt: auth.expiresAt,
+      userAgent: (state && state.userAgent) || null,
+      source: 'browser',
+    });
+    log.info('токен профильной сессии сохранён в общий кэш dev/.qwen-tokens.cache');
+  } catch (e) {
+    log.debug(`не удалось сохранить токен в общий кэш: ${humanize(e.message, 120)}`);
+  }
 }
 
 async function isLoggedIn(ctx, reason = '') {
@@ -1240,6 +1284,7 @@ async function isLoggedIn(ctx, reason = '') {
       ? `, API /api/v2/auths/ -> 200 (id=${state.api.id}, email=${state.api.email})`
       : `, API /api/v2/auths/ -> ${state.api.status || state.api.error || 'n/a'}`;
     log.ok(`профиль ЗАЛОГИНЕН: /settings/general открылся (url=${state.url}${extra})`);
+    await rememberTokenInSharedCache(ctx, state);
     await shot(ctx, 'logged-in-settings');
     return true;
   }
