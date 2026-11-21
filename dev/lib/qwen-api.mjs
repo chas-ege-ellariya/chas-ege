@@ -173,6 +173,10 @@ async function apiCall(apiPath, { method = 'GET', body, token, baseUrl = QWEN_BA
         if (!json || typeof json !== 'object') {
             throw new QwenApiError(`ответ не JSON на ${method} ${apiPath} (API поменялся?)`, 'endpoint', res.status);
         }
+        // бывает HTTP 200 с {code, details} вообще без success — это тоже отказ
+        if (json.success === undefined && typeof json.code === 'string' && json.details) {
+            throw new QwenApiError(`отказ API: HTTP ${res.status} / ${json.code} / ${String(json.details).slice(0, 160)}`, 'api', res.status);
+        }
         if (json.success === false) {
             const d = json.data || {};
             const code = String(d.code || '').toLowerCase();
@@ -278,15 +282,24 @@ export async function listModels(session) {
 }
 
 /**
- * Общая запись настроек: читаем, меняем только то, что попросили, пишем весь
- * объект обратно (иначе есть риск затереть соседние разделы), перечитываем.
- * @param {Function} mutate - получает копию настроек, правит её на месте
+ * Общая запись настроек: читаем текущие, отправляем ТОЛЬКО изменённые разделы,
+ * перечитываем и отдаём «до/после».
+ *
+ * ВАЖНО (грабли, найденные вживую): если отправить обратно весь объект настроек,
+ * Qwen для части аккаунтов молча игнорирует запрос целиком — отвечает
+ * {success:true} и старыми значениями. Виноват раздел manage_cookies: стоит ему
+ * попасть в payload (у аккаунтов с записанным согласием на куки он непустой),
+ * как не применяется НИЧЕГО. Поэтому шлём только то, что реально меняем:
+ * это и работает, и не затирает соседние разделы.
+ *
+ * @param {Function} mutate - получает (payload, before); кладёт в payload разделы для записи
  * @returns {{before: object, after: object}}
  */
 export async function updateSettings(session, mutate) {
     const before = await getSettings(session);
-    const payload = JSON.parse(JSON.stringify(before));
-    mutate(payload);
+    const payload = {};
+    mutate(payload, JSON.parse(JSON.stringify(before)));
+    if (!Object.keys(payload).length) return { before, after: before };
     await session.request('/api/v2/users/user/settings/update', { method: 'POST', body: payload });
     const after = await getSettings(session);
     return { before, after };
@@ -308,7 +321,9 @@ export async function applyAccountConfig(session, want) {
                  before: { instruction: curInstruction, models: curModels }, after: { instruction: curInstruction, models: curModels } };
     }
 
-    const payload = JSON.parse(JSON.stringify(before));
+    // только изменённые разделы: весь объект целиком Qwen местами молча игнорирует
+    // (см. комментарий к updateSettings — виноват manage_cookies)
+    const payload = {};
     if (needInstruction) {
         payload.personalization = Object.assign(
             { name: '', description: '', style: null, enable_for_new_chat: true },
@@ -319,7 +334,19 @@ export async function applyAccountConfig(session, want) {
     if (needModel) {
         payload.ui = Object.assign({}, before.ui || {}, { models: [want.model] });
     }
-    await session.request('/api/v2/users/user/settings/update', { method: 'POST', body: payload });
+    const resp = await session.request('/api/v2/users/user/settings/update', { method: 'POST', body: payload });
+
+    // сервер возвращает применённые настройки: если в эхе старое — запрос проигнорирован
+    const echo = resp && resp.data;
+    if (echo && typeof echo === 'object') {
+        if (needInstruction && extractInstruction(echo) !== want.instruction) {
+            throw new QwenApiError('сервер ответил success, но промпт не применил (в эхе старое значение). Похоже, запрос проигнорирован целиком.', 'verify');
+        }
+        const em = extractModels(echo);
+        if (needModel && !(em.length === 1 && em[0] === want.model)) {
+            throw new QwenApiError(`сервер ответил success, но модель не применил (в эхе [${em.join(', ')}]). Похоже, запрос проигнорирован целиком.`, 'verify');
+        }
+    }
 
     const after = await getSettings(session);
     const gotInstruction = extractInstruction(after);
