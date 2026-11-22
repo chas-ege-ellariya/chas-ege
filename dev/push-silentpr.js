@@ -82,6 +82,51 @@ function ask(prompt) {
 }
 function eofExit() { console.log('\n⏹️  Ввод закончился (EOF) — выходим.'); process.exit(0); }
 
+// ---------- строка состояния ----------
+// Верхняя строка терминала отдаётся под счётчики, остальное — область прокрутки (DECSTBM).
+// Работает и с наследуемым выводом git: область прокрутки — состояние терминала, а не процесса.
+// Без TTY (pipe, CI) полностью выключено: вывод остаётся байт в байт прежним.
+const UI = {
+  on: false, total: 0, index: 0, pushed: 0, deleted: 0, skipped: 0, failed: 0, current: '',
+  init() {
+    if (!this.on) return;
+    const rows = process.stdout.rows || 24;
+    process.stdout.write('\x1b[2J\x1b[H');
+    process.stdout.write(`\x1b[2;${rows}r\x1b[2;1H`);
+    this.draw();
+  },
+  draw() {
+    if (!this.on) return;
+    const cols = process.stdout.columns || 80;
+    let s = `silentpr ${this.index}/${this.total} | осталось ${Math.max(0, this.total - this.index)}` +
+            ` | запушено ${this.pushed} | снесено ${this.deleted} | пропущено ${this.skipped}` +
+            (this.failed ? ` | ошибок ${this.failed}` : '') + (this.current ? ` | ${this.current}` : '');
+    if (s.length > cols) s = s.slice(0, cols - 1) + '…';
+    process.stdout.write('\x1b7\x1b[1;1H\x1b[2K\x1b[7m' + s.padEnd(cols) + '\x1b[0m\x1b8');
+  },
+  done() {
+    if (!this.on) return;
+    this.on = false;
+    process.stdout.write('\x1b[r\x1b7\x1b[1;1H\x1b[2K\x1b8\n');
+  },
+};
+process.on('exit', () => UI.done());
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => process.exit(130));
+
+// Ветка с таким именем в ДРУГИХ ремоутах: частая причина «target не существует» —
+// в имени silentpr указан не тот ремоут (например, автор PR, а ветка лежит в upstream).
+function branchElsewhere(branch, excludeRemote) {
+  const out = gitOut(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']) || '';
+  const hits = [];
+  for (const line of out.split('\n').filter(Boolean)) {
+    const i = line.indexOf('/');
+    if (i < 0) continue;
+    const r = line.slice(0, i), b = line.slice(i + 1);
+    if (r !== excludeRemote && b === branch && !hits.includes(r)) hits.push(r);
+  }
+  return hits;
+}
+
 // ---------- классификация пробелов ----------
 function normWs(buf) {
   const lines = buf.toString('utf8').split('\n')
@@ -158,6 +203,8 @@ async function askAction(ref, targetRemote, branchName, sourceSha, state) {
       console.log('   Target SHA: (не существует)');
       console.log('   Статус: 🆕 Target не существует');
       console.log('   ⚠️  d снесёт ветку source насовсем; f — сфетчить ремоут и перепроверить имя ветки');
+      const other = branchElsewhere(branchName, targetRemote);
+      if (other.length) console.log(`   ℹ️  Ветка '${branchName}' есть в других ремоутах: ${other.join(', ')} — похоже, в имени silentpr не тот ремоут`);
     } else {
       console.log('   Target SHA: (неизвестно)');
       console.log('   Статус: ❓ Target не проверен: fetch упал (f — попробовать снова)');
@@ -298,30 +345,47 @@ async function splitPush(base, targetRemote, branchName, sourceSha) {
 
 // ---------- main ----------
 async function main() {
-  let sourceRemote = '', interactive = false;
+  let sourceRemote = '', interactive = false, all = false, noUi = false;
   const usage = (code) => {
     console.log(`Использование: ${process.argv[1]} [-i] <source_remote>`);
     console.log(`Пример: ${process.argv[1]} -i chas-ege-ulyana`);
     console.log('Флаги можно ставить где угодно: и до, и после имени ремоута.');
     console.log('  -i, --interactive  Интерактивный режим (y/n/d/s/f для каждого silentpr)');
+    console.log('  --all              Все ремоуты: пройти по всем silentpr во всех форках');
+    console.log('  --no-ui            Не рисовать строку состояния вверху терминала');
     console.log('  -h, --help         Эта справка');
     process.exit(code);
   };
   for (const a of process.argv.slice(2)) {
     if (a === '-i' || a === '--interactive') interactive = true;
     else if (a === '-h' || a === '--help') usage(0);
+    else if (a === '--all') all = true;
+    else if (a === '--no-ui') noUi = true;
     else if (a.startsWith('-')) { console.log(`Неизвестный флаг: ${a}`); usage(1); }
     else if (sourceRemote) { console.log(`Лишний аргумент: ${a} (ремоут уже задан: ${sourceRemote})`); usage(1); }
     else sourceRemote = a;
   }
-  if (!sourceRemote) usage(1);
+  if (all && sourceRemote) { console.log('--all и имя ремоута вместе нельзя: выбери что-то одно.'); usage(1); }
+  if (!all && !sourceRemote) usage(1);
+  UI.on = process.stdout.isTTY && process.env.TERM !== 'dumb' && !noUi;
+  if (UI.on) process.stdout.on('resize', () => { const rows = process.stdout.rows || 24; process.stdout.write(`\x1b[2;${rows}r`); UI.draw(); });
 
-  console.log(`🔄 Подтягиваем свежие ветки из ${sourceRemote}...`);
-  gitInherit(['fetch', '--quiet', '--prune', sourceRemote]);
-
-  const refs = (gitOut(['for-each-ref', '--format=%(refname:short)', `refs/remotes/${sourceRemote}/silentpr`]) || '')
-    .split('\n').filter(Boolean);
-  for (const ref of refs) {
+  const remotes = all ? (gitOut(['remote']) || '').split('\n').filter(Boolean) : [sourceRemote];
+  const jobs = [];
+  for (let i = 0; i < remotes.length; i++) {
+    const r = remotes[i];
+    console.log(`🔄 [${i + 1}/${remotes.length}] Подтягиваем свежие ветки из ${r}...`);
+    gitInherit(['fetch', '--quiet', '--prune', r]);
+    const refs = (gitOut(['for-each-ref', '--format=%(refname:short)', `refs/remotes/${r}/silentpr`]) || '')
+      .split('\n').filter(Boolean);
+    for (const ref of refs) jobs.push({ remote: r, ref });
+  }
+  UI.total = jobs.length;
+  UI.init();
+  console.log(`📋 Всего silentpr к разбору: ${jobs.length}`);
+  for (const job of jobs) {
+    const sourceRemote = job.remote, ref = job.ref;
+    UI.index++; UI.current = ref; UI.draw();
     const parts = ref.split('/');
     if (parts.length < 4) continue;
     const targetRemote = parts[2];
@@ -332,28 +396,37 @@ async function main() {
     const st = targetState(targetRemote, branchName);
 
     // Ветки совпадают — молча пропускаем в любом режиме
-    if (st.exists && sourceSha === st.sha) continue;
+    if (st.exists && sourceSha === st.sha) { UI.skipped++; UI.draw(); continue; }
 
     const srcRef = `silentpr/${targetRemote}/${branchName}`;
     if (interactive) {
       // askAction может обновить st (действие f) — дальше работаем со свежим состоянием
       const { action, splitBase } = await askAction(ref, targetRemote, branchName, sourceSha, st);
       if (action === 'n') {
-        console.log(`⏭️  Пропускаем ${ref}`);
+        console.log(`⏭️  Пропускаем ${ref}`); UI.skipped++; UI.draw();
         console.log('-----------------------------------');
         continue;
       }
       if (action === 'd') {
         if (st.exists) {
           console.log('🗑️  Force reset source к target...');
-          if (gitQuiet(['push', '--force', sourceRemote, `${st.sha}:refs/heads/${srcRef}`, '--quiet']) === 0)
-            console.log('✅ Source сброшен к состоянию target');
-          else
+          if (gitQuiet(['push', '--force', sourceRemote, `${st.sha}:refs/heads/${srcRef}`, '--quiet']) === 0) {
+            console.log('✅ Source сброшен к состоянию target'); UI.deleted++; UI.draw();
+          } else
             console.log('❌ Ошибка force reset');
         } else {
           // Цель не существует: сбрасывать не к чему — сносим саму ветку source.
           // Перед необратимым действием сверяемся с сервером: локальный кэш мог соврать.
           console.log(`🗑️  Target не существует — сносим ветку source ${sourceRemote}/${srcRef}...`);
+          const other = branchElsewhere(branchName, targetRemote);
+          if (other.length) {
+            console.log(`❌ Ветка '${branchName}' есть в других ремоутах: ${other.join(', ')}.`);
+            console.log('   Удаление отменено: скорее всего, в имени silentpr указан не тот ремоут.');
+            console.log(`   Перенести: git push ${sourceRemote} ${sourceSha}:refs/heads/silentpr/${other[0]}/${branchName}`);
+            console.log(`   Затем:     git push ${sourceRemote} --delete refs/heads/${srcRef}`);
+            console.log('-----------------------------------');
+            continue;
+          }
           const chk = lsRemoteBranch(targetRemote, branchName);
           if (!chk.ok) {
             console.log(`❌ Не могу проверить ${targetRemote}: ${chk.err.split('\n')[0]}`);
@@ -366,7 +439,7 @@ async function main() {
             console.log(`   Вернуть, если передумаешь: git push ${sourceRemote} ${sourceSha}:refs/heads/${srcRef}`);
             if (gitInherit(['push', sourceRemote, '--delete', `refs/heads/${srcRef}`]) === 0) {
               gitQuiet(['update-ref', '-d', `refs/remotes/${sourceRemote}/${srcRef}`]);
-              console.log('✅ Ветка source удалена');
+              console.log('✅ Ветка source удалена'); UI.deleted++; UI.draw();
             } else {
               console.log('❌ Ошибка удаления ветки source');
             }
@@ -385,7 +458,7 @@ async function main() {
     if (st.exists && gitOk(['merge-base', '--is-ancestor', sourceSha, st.sha])) {
       console.log('🔄 Target опережает source, обновляем source...');
       gitQuiet(['push', sourceRemote, `${st.sha}:refs/heads/${srcRef}`, '--quiet']);
-      console.log('✅ Source обновлён');
+      console.log('✅ Source обновлён'); UI.pushed++; UI.draw();
       console.log('-----------------------------------');
       continue;
     }
@@ -396,8 +469,11 @@ async function main() {
       console.log('✅ Успешно запушено!');
     else
       console.log('❌ Ошибка пуша. Возможно, нет прав или ветка diverged.');
+    if (gitOk(['rev-parse', '--verify', '--quiet', `refs/remotes/${targetRemote}/${branchName}`])) { UI.pushed++; } else { UI.failed++; }
+    UI.draw();
     console.log('-----------------------------------');
   }
   rl.close();
+  UI.done();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
