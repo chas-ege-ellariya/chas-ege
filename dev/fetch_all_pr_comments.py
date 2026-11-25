@@ -148,6 +148,25 @@ def generate_output_filename(args):
     
     return f"{base_name}.json"
 
+def get_all_pages(url, headers):
+    """
+    Все элементы списка из GitHub API, со всех страниц.
+    Без per_page и перехода по ссылке rel="next" API отдаёт только первые 30 элементов,
+    и длинное обсуждение молча обрезается.
+    Возвращает None, если хоть один запрос вернул не 200 (о чём пишет в консоль).
+    """
+    items = []
+    params = {"per_page": 100}
+    while url:
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            print(f"\n  ⚠ {url}: код {response.status_code}", end=' ')
+            return None
+        items.extend(response.json())
+        url = response.links.get("next", {}).get("url")
+        params = None  # в ссылке rel="next" параметры уже есть
+    return items
+
 def fetch_pr_comments(pr_number, token, repo="nickkolok/chas-ege"):
     """
     Получает все комментарии одного пулов реквеста через GitHub API.
@@ -174,13 +193,16 @@ def fetch_pr_comments(pr_number, token, repo="nickkolok/chas-ege"):
 
     # Issue comments (общие комментарии)
     comments_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-    comments_response = requests.get(comments_url, headers=headers)
-    issue_comments = comments_response.json() if comments_response.status_code == 200 else []
+    issue_comments = get_all_pages(comments_url, headers)
 
     # Review comments (inline комментарии к коду)
     review_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/comments"
-    review_response = requests.get(review_url, headers=headers)
-    review_comments = review_response.json() if review_response.status_code == 200 else []
+    review_comments = get_all_pages(review_url, headers)
+
+    # Не получили список — пишем об этом в результат, а не выдаём пустой за «комментариев нет»
+    incomplete = issue_comments is None or review_comments is None
+    issue_comments = issue_comments or []
+    review_comments = review_comments or []
 
     result = {
         "pr_number": pr_number,
@@ -192,6 +214,7 @@ def fetch_pr_comments(pr_number, token, repo="nickkolok/chas-ege"):
         "total_issue_comments": len(issue_comments),
         "total_review_comments": len(review_comments),
         "total_comments": len(issue_comments) + len(review_comments),
+        "incomplete": incomplete,
         "issue_comments": [],
         "review_comments": []
     }
@@ -272,7 +295,8 @@ def main():
 
         if result:
             all_prs_data.append(result)
-            print(f"✓ Issue: {result['total_issue_comments']}, Review: {result['total_review_comments']}")
+            print(f"✓ Issue: {result['total_issue_comments']}, Review: {result['total_review_comments']}"
+                  + (" — НЕ ВСЁ: см. ⚠ выше" if result['incomplete'] else ""))
         else:
             print(f"✗ не является PR (пропущен)")
             skipped.append(pr_number)
