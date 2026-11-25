@@ -209,6 +209,7 @@ def fetch_pr_comments(pr_number, token, repo="nickkolok/chas-ege"):
         "pr_title": pr_data.get('title', ''),
         "pr_url": f"https://github.com/{repo}/pull/{pr_number}",
         "pr_state": pr_data.get('state', ''),
+        "pr_merged_at": pr_data.get('merged_at'),  # null — не смёржен (state closed без даты — закрыт без мержа)
         "pr_created_at": pr_data.get('created_at', ''),
         "pr_updated_at": pr_data.get('updated_at', ''),
         "total_issue_comments": len(issue_comments),
