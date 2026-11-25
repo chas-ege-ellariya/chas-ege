@@ -199,10 +199,16 @@ def fetch_pr_comments(pr_number, token, repo="nickkolok/chas-ege"):
     review_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/comments"
     review_comments = get_all_pages(review_url, headers)
 
+    # Сами ревью: вердикт (APPROVED, CHANGES_REQUESTED, COMMENTED) и общий текст ревью —
+    # его нет ни среди issue comments, ни среди review comments к строкам
+    reviews_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/reviews"
+    reviews = get_all_pages(reviews_url, headers)
+
     # Не получили список — пишем об этом в результат, а не выдаём пустой за «комментариев нет»
-    incomplete = issue_comments is None or review_comments is None
+    incomplete = issue_comments is None or review_comments is None or reviews is None
     issue_comments = issue_comments or []
     review_comments = review_comments or []
+    reviews = reviews or []
 
     result = {
         "pr_number": pr_number,
@@ -216,8 +222,20 @@ def fetch_pr_comments(pr_number, token, repo="nickkolok/chas-ege"):
         "total_review_comments": len(review_comments),
         "total_comments": len(issue_comments) + len(review_comments),
         "incomplete": incomplete,
+        "total_reviews": len(reviews),
         "issue_comments": [],
-        "review_comments": []
+        "review_comments": [],
+        "reviews": [
+            {
+                "id": review.get('id'),
+                "user": (review.get('user') or {}).get('login', ''),
+                "state": review.get('state', ''),
+                "submitted_at": review.get('submitted_at', ''),
+                "body": review.get('body', ''),
+                "url": review.get('html_url', '')
+            }
+            for review in reviews
+        ]
     }
 
     for comment in issue_comments:
@@ -296,7 +314,8 @@ def main():
 
         if result:
             all_prs_data.append(result)
-            print(f"✓ Issue: {result['total_issue_comments']}, Review: {result['total_review_comments']}"
+            print(f"✓ Issue: {result['total_issue_comments']}, Review: {result['total_review_comments']},"
+                  f" ревью: {result['total_reviews']}"
                   + (" — НЕ ВСЁ: см. ⚠ выше" if result['incomplete'] else ""))
         else:
             print(f"✗ не является PR (пропущен)")
