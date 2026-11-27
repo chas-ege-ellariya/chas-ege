@@ -43,7 +43,12 @@
             ctx.strokeStyle = om.primaryBrandColors.iz();
             ctx.arcBetweenSegments([points[2], points[1], rayEnd], 15);
 
-            ctx.arcBetweenSegments([points[0], points[3], points[2]], 15);
+            // Как на чертеже ФИПИ: M — середина основания, боковые стороны равны;
+            // прямой угол при M не отмечен — в условии дана медиана, а не высота
+            ctx.strokeInMiddleOfSegment(points[0].x, points[0].y, points[3].x, points[3].y, 10);
+            ctx.strokeInMiddleOfSegment(points[3].x, points[3].y, points[1].x, points[1].y, 10);
+            ctx.strokeInMiddleOfSegment(points[0].x, points[0].y, points[2].x, points[2].y, 10, 2);
+            ctx.strokeInMiddleOfSegment(points[2].x, points[2].y, points[1].x, points[1].y, 10, 2);
 
             ctx.signVertices(points, letters, {above: [2]});
         };
