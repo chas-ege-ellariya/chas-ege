@@ -65,7 +65,7 @@
             text: `Площадь прямоугольника $ABCD$ равна $${area}$, ${[`$AB=${a}$`, `сторона $BC=${b}$`, `сторона $BC=${b}$`][rand]}. Найдите ${[`синус`, `тангенс`, `тангенс`][rand]} угла $${[`CAD`, `CAB`, `CAD`][rand]}$.`,
             answers: answ,
             authors: ['Александра Суматохина'],
-            preference: preference,
+            preference: [preference],
         });
 
         NAtask.modifiers.addCanvasIllustration({
