@@ -64,6 +64,7 @@
             authors: ['Александра Суматохина'],
             preference: [preference],
         });
+        NAtask.modifiers.variativeABC(letters);
 
         NAtask.modifiers.addCanvasIllustration({
             width: 400,
